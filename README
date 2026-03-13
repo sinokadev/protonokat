@@ -1,0 +1,164 @@
+ProtoNokat (Noka + Chat) v1.0
+
+---
+
+PSize와 Data
+---
+
+우리는 Data를 "|"로 구분합니다. Data의 최대 갯수는 맨 첫번째 Data를 통해 결정됩니다.
+
+예시를 들자면 다음과 같은 Payload가 있습니다.
+
+10|4:AUTH|8:PassWord
+
+Data가 2개 있습니다. PType과 PassWord입니다.
+
+우리는 이것을 PSize라고 부릅니다. (Payload Size) (참고로 Payload는 "|"으로 구분된 Data가 있는 전채 메시지를 뜻합니다.)  
+PSize는 PSize 필드 자체를 제외한 나머지 필드의 개수를 표기합니다.
+
+Data는 생략 가능할 수 있습니다. 이를 생략 가능한 Data라고 부릅니다. 생략된 Data의 구분자는 존재해야 하며, 값만 없어야 합니다.
+
+DataLen
+---
+
+하지만 Message등 Data에 "|"가 포함될 경우 데이터가 깨질수 있다는 문제를 대비하여 다음과 같은 해결책을 제시합니다.
+
+Size:Data
+
+Data 앞에는 ":"을 사용하여 Data의 Byte-Length을 표기할 수 있습니다.
+
+DataLen은 모든 Data에 대해 필수적입니다.
+
+
+PType
+---
+
+두번째 Data는 항상 PType(Payload Type)입니다. 이것은 항상 다음중 하나입니다.
+
+1. AUTH
+2. AUTH_RES
+3. SET_USER
+4. EDIT_USER
+5. SEND_MSG
+6. RECV_MSG
+7. KICK
+8. ETC
+
+AUTH
+---
+
+인증을 위한 PType입니다. 클라이언트 전용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|PassWord
+
+PassWord는 생략될 수 있습니다. 서버는 이 Payload를 확인하고 클라이언트에게 AUTH_RES를 응답합니다.
+
+AUTH_RES
+---
+
+인증을 위한 PType입니다. 서버 전용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|Status|Message
+
+Message는 생략될 수 있습니다.
+
+Status는 다음 값 중 하나여야 합니다.
+
+1. OK
+2. FAIL
+
+OK인 경우 유저의 접속이 허용되며, 이후 SET_USER를 통해 프로필을 설정할 수 있습니다.  
+FAIL인 경우 유저의 접속이 불허용 되며, 접속이 끊어집니다.
+
+클라이언트는 Message를 자유롭게 처리할 수 있습니다.
+
+SET_USER
+---
+
+프로필 설정을 위한 PType입니다. 클라이언트 전용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|NickName
+
+서버는 해당 클라이언트가 SEND_MSG를 사용할 때마다 NickName을 포함하여 Target 유저에게 RECV_MSG를 전송합니다.
+
+만약 이미 해당 NickName을 가진 유저가 있다면, 서버는 EDIT_USER를 사용하여 변경된 겹치지 않는 새로운 닉네임을 클라이언트에게 알려줍니다.
+
+ALL은 NickName으로 사용할 수 없습니다. ALL을 닉네임으로 사용한 경우 서버는 KICK을 사용하여 통보 후 연결을 끊어야 합니다.
+
+클라이언트가 SET_USER를 한번이라도 사용하기 전 까지는 모든 다른 Payload를 비허용 합니다. 한번이라도 SET_USER를 사용했다면 이후에는 SET_USER를 사용할 수 없습니다.
+
+EDIT_USER
+---
+
+프로필 재설정을 위한 PType입니다. 클라이언트, 서버 겸용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|NickName|Status|Message
+
+Message는 생략될 수 있습니다.
+
+서버가 사용할 경우(서버 to 클라이언트) 해당 유저의 닉네임을 강제로 변경할 수 있습니다. 통보 목적으로 사용됩니다. 또한 Message를 유저에게 표시합니다.
+
+클라이언트가 사용할 경우 서버는 해당 유저의 닉네임을 변경해야 합니다. 또한 변경된 경우 서버에선 EDIT_USER를 다시 전송해 확정을 통보할 수 있습니다. Message Data는 무시됩니다. 만약 임의의 이유(이미 해당 닉네임을 사용중인 유저가 있는 등)로 변경이 거절되었다면, 서버는 EDIT_USER를 다시 사용하여 원래 닉네임 또는 새로운 닉네임을 통보할 수 있습니다.
+
+Status는 다음과 같은 숫자 값을 가집니다.
+
+1. 닉네임 변경 요청 승인
+2. 서버에 의한 강제 변경(닉네임 겹침 포함)
+
+Status는 클라이언트가 서버에게 보낼 때 무시됩니다.
+
+SEND_MSG
+---
+
+메시지 전송을 위한 PType입니다. 클라이언트 전용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|Message|Target
+
+Target은 이 메시지를 전달하려는 대상입니다. ALL 또는 특정 클라이언트의 NickName이 될 수 있습니다.
+
+Message는 대상에게 전달할 메시지입니다. 서버는 해당 대상에게 RECV_MSG를 통해 해당 메시지를 표시하도록 지시합니다.
+
+RECV_MSG
+---
+
+메시지 전송을 위한 PType입니다. 서버 전용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|SenderNick|Message
+
+서버는 SEND_MSG를 받은 후, 이 Payload를 특정 클라이언트에게 전송하여 Message를 표시하도록 명령합니다. 클라이언트는 서버로부터 받은 Message를 화면에 표시해야합니다.
+
+SenderNick에는 이 메시지를 보낸 것에 대한 데이터가 포함되어 있습니다.
+
+KICK
+---
+
+메시지 전송을 위한 PType입니다. 서버 전용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|Message
+
+서버는 해당 Payload를 유저에게 전송 후, 연결을 끊을 수 있습니다. 클라이언트는 Message를 원하는 대로 사용할 수 있습니다.
+
+ETC
+---
+
+여러가지 용도를 위한 PType입니다. 클라이언트, 서버 겸용입니다.
+
+다음과 같은 구조로 이루어져 있습니다.
+
+PType|...
+
+특정 서버 구현체 또는 클라이언트 구현체에서 자체적인 기능을 구현할 때 사용 가능합니다.
