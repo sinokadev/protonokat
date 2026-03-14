@@ -9,7 +9,7 @@ PSize와 Data
 
 예시를 들자면 다음과 같은 Payload가 있습니다.
 
-10|4:AUTH|8:PassWord
+2|4:AUTH|8:PassWord
 
 Data가 2개 있습니다. PType과 PassWord입니다.
 
