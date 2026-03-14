@@ -2,7 +2,7 @@ import asyncio
 import sys
 
 class ProtoNokatClient:
-    def __init__(self, host='127.0.0.1', port=8888):
+    def __init__(self, host='127.0.0.1', port=1226):
         self.host = host
         self.port = port
         self.reader = None
@@ -10,8 +10,15 @@ class ProtoNokatClient:
         self.nickname = ""
 
     def encode_field(self, data):
-        """데이터를 Size:Data 형식으로 인코딩"""
-        return f"{len(str(data))}:{data}"
+        """데이터를 ByteSize:Data 형식으로 인코딩 (UTF-8 기준)"""
+        if data is None:
+            data = ""
+            
+        # 데이터를 문자열로 변환 후 utf-8 바이트로 인코딩
+        byte_data = str(data).encode('utf-8')
+        
+        # 바이트 배열의 길이를 측정
+        return f"{len(byte_data)}:{str(data)}"
 
     def decode_field(self, field):
         """Size:Data 형식에서 실제 데이터만 추출"""

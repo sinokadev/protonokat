@@ -3,7 +3,20 @@ import asyncio
 class ProtoNokatServer:
     def __init__(self):
         self.clients = {}  # {nickname: writer}
-        self.unauthenticated_clients = set()
+
+    def encode_field(self, data):
+        """데이터를 UTF-8 바이트 기준으로 'Size:Data' 형식으로 변환"""
+        if data is None:
+            data = ""
+        data_str = str(data)
+        byte_len = len(data_str.encode('utf-8'))
+        return f"{byte_len}:{data_str}"
+
+    def build_payload(self, *args):
+        """가변 인자를 받아 PSize와 인코딩된 필드들을 합쳐 전체 페이로드 생성"""
+        encoded_fields = [self.encode_field(arg) for arg in args]
+        psize = len(encoded_fields)
+        return f"{psize}|" + "|".join(encoded_fields)
 
     async def handle_client(self, reader, writer):
         addr = writer.get_extra_info('peername')
@@ -19,78 +32,83 @@ class ProtoNokatServer:
                 if not data:
                     break
 
+                # 수신 데이터 처리
                 payload = data.decode('utf-8').strip()
-                parts = payload.split('|')
+                if not payload: continue
                 
-                # 1. PSize 확인 (간단 구현을 위해 검증 생략 가능하나 규격상 존재)
-                psize = int(parts[0])
-                fields = parts[1:]
+                parts = payload.split('|')
+                # 규격상 첫 번째는 PSize, 그 뒤는 DataLen:Data 형태들
+                fields_raw = parts[1:]
 
-                # 2. DataLen 파싱 함수 (Size:Data -> Data)
                 def parse_field(field):
                     if ':' in field:
-                        size, value = field.split(':', 1)
+                        # 첫 번째 ':'를 기준으로 분리 (데이터 내에 ':'가 있을 수 있음)
+                        _, value = field.split(':', 1)
                         return value
                     return field
 
-                decoded_fields = [parse_field(f) for f in fields]
+                decoded_fields = [parse_field(f) for f in fields_raw]
+                if not decoded_fields: continue
+                
                 ptype = decoded_fields[0]
 
                 # --- 로직 처리 ---
 
-                # AUTH: 인증 처리
+                # 1. AUTH
                 if ptype == "AUTH":
-                    # 규격: PType|PassWord
-                    status = "OK" # 예시로 무조건 승인
-                    msg = "Welcome to Nokat!"
-                    response = f"3|12:AUTH_RES|2:{status}|{len(msg)}:{msg}"
-                    writer.write(response.encode())
+                    status = "OK"
+                    msg = "Welcome to Nokat! 안녕하세요!" # 한글 포함 테스트
+                    response = self.build_payload("AUTH_RES", status, msg)
+                    writer.write(response.encode('utf-8'))
                     await writer.drain()
                     authenticated = True
 
-                # SET_USER: 프로필 설정 (AUTH 이후 필수)
+                # 2. SET_USER
                 elif ptype == "SET_USER":
-                    if not authenticated: continue
-                    if set_user_done: continue
+                    if not authenticated or set_user_done: continue
                     
                     nick = decoded_fields[1]
                     if nick == "ALL":
-                        # ALL 사용 시 KICK
-                        k_msg = "Nickname 'ALL' is not allowed."
-                        writer.write(f"2|4:KICK|{len(k_msg)}:{k_msg}".encode())
+                        k_msg = "Nickname 'ALL' is forbidden."
+                        writer.write(self.build_payload("KICK", k_msg).encode('utf-8'))
                         await writer.drain()
                         break
                     
                     if nick in self.clients:
-                        # 중복 시 EDIT_USER로 강제 변경 통보
                         new_nick = f"{nick}_{addr[1]}"
+                        msg = f"중복된 닉네임입니다. {new_nick}(으)로 변경되었습니다."
+                        # EDIT_USER | NickName | Status | Message
+                        response = self.build_payload("EDIT_USER", new_nick, "2", msg)
+                        writer.write(response.encode('utf-8'))
                         current_nickname = new_nick
-                        msg = f"Nickname duplicated. Changed to {new_nick}"
-                        writer.write(f"4|9:EDIT_USER|{len(new_nick)}:{new_nick}|1:2|{len(msg)}:{msg}".encode())
                     else:
                         current_nickname = nick
+                        # 승인 통보 (Status 1: 승인)
+                        response = self.build_payload("EDIT_USER", nick, "1", "Success")
+                        writer.write(response.encode('utf-8'))
                     
                     self.clients[current_nickname] = writer
                     set_user_done = True
                     print(f"[+] 유저 등록: {current_nickname}")
 
-                # SEND_MSG: 메시지 중계
+                # 3. SEND_MSG
                 elif ptype == "SEND_MSG":
                     if not set_user_done: continue
                     
                     msg_content = decoded_fields[1]
                     target = decoded_fields[2]
                     
-                    # RECV_MSG 생성
-                    recv_payload = f"3|8:RECV_MSG|{len(current_nickname)}:{current_nickname}|{len(msg_content)}:{msg_content}"
+                    # RECV_MSG | SenderNick | Message
+                    recv_payload = self.build_payload("RECV_MSG", current_nickname, msg_content)
+                    encoded_recv = recv_payload.encode('utf-8')
                     
                     if target == "ALL":
                         for nick, w in self.clients.items():
                             if nick != current_nickname:
-                                w.write(recv_payload.encode())
+                                w.write(encoded_recv)
                                 await w.drain()
                     elif target in self.clients:
-                        self.clients[target].write(recv_payload.encode())
+                        self.clients[target].write(encoded_recv)
                         await self.clients[target].drain()
 
         except Exception as e:
@@ -104,8 +122,8 @@ class ProtoNokatServer:
 
 async def main():
     server_logic = ProtoNokatServer()
-    server = await asyncio.start_server(server_logic.handle_client, '127.0.0.1', 8888)
-    print("[*] ProtoNokat 서버가 8888 포트에서 대기 중입니다...")
+    server = await asyncio.start_server(server_logic.handle_client, '0.0.0.0', 1226)
+    print("[*] ProtoNokat v1.0 서버가 1226 포트에서 대기 중입니다...")
     async with server:
         await server.serve_forever()
 
